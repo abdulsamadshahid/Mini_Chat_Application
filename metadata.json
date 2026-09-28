@@ -1,0 +1,6 @@
+{
+  "name": "MiniChat",
+  "description": "Production-ready real-time chat application with PostgreSQL, Redis Pub/Sub, JWT authentication, and horizontal scalability designed for Kubernetes & DevOps portfolio.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
