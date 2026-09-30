@@ -16,6 +16,6 @@ spec:
     spec:
       containers:
       - name: frontend
-        image: public.ecr.aws/k5n5y8u0/minichat-backend
+        image: public.ecr.aws/k5n5y8u0/minichat-frontend
         ports:
         - containerPort: 80
