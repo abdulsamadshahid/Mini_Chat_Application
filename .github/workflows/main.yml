@@ -27,19 +27,19 @@ jobs:
         uses: actions/checkout@v4
       - name: Build and Push Docker Images
         run: |
-          aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin 058835008914.dkr.ecr.ap-south-1.amazonaws.com
+          aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin public.ecr.aws
 
           docker build -f ./frontend/Dockerfile -t my-minichat-app_frontend ./frontend
 
-          docker tag my-minichat-app_frontend:latest 058835008914.dkr.ecr.ap-south-1.amazonaws.com/frontend_repo:latest
+          docker tag my-minichat-app_frontend:latest public.ecr.aws/k5n5y8u0/minichat-frontend:latest
 
-          docker push 058835008914.dkr.ecr.ap-south-1.amazonaws.com/frontend_repo:latest
+          docker push public.ecr.aws/k5n5y8u0/minichat-frontend:latest
 
           docker build -f ./backend/Dockerfile -t my-minichat-app_backend ./backend
 
-          docker tag my-minichat-app_backend:latest 058835008914.dkr.ecr.ap-south-1.amazonaws.com/backend_repo:latest
+          docker tag my-minichat-app_backend:latest public.ecr.aws/k5n5y8u0/minichat-backend:latest
 
-          docker push 058835008914.dkr.ecr.ap-south-1.amazonaws.com/backend_repo:latest
+          docker push public.ecr.aws/k5n5y8u0/minichat-backend:latest
   Deploy:
     needs: Configure_AWS_Credentials
     runs-on: ubuntu-latest
@@ -72,7 +72,6 @@ jobs:
         run: |
           ssh -o StrictHostKeyChecking=no -i id_rsa ubuntu@65.0.123.46 << 'EOF'
           kind get clusters | grep -qx tws-kind-cluster || kind create cluster --config k8s/kind-config.yaml --name tws-kind-cluster
-          aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin 058835008914.dkr.ecr.ap-south-1.amazonaws.com
           sudo kubectl apply -f k8s/
           EOF
       - name: Remove SSH key
