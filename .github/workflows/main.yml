@@ -73,7 +73,7 @@ jobs:
           ssh -o StrictHostKeyChecking=no -i id_rsa ubuntu@65.0.123.46 << 'EOF'
           kind get clusters | grep -qx tws-kind-cluster || kind create cluster --config k8s/kind-config.yaml --name tws-kind-cluster
           aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin 058835008914.dkr.ecr.ap-south-1.amazonaws.com
-          kubectl apply -f k8s/
+          sudo kubectl apply -f k8s/
           EOF
       - name: Remove SSH key
         if: always()
