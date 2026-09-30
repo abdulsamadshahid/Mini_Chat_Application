@@ -71,7 +71,8 @@ jobs:
       - name: Deploy on EC2
         run: |
           ssh -o StrictHostKeyChecking=no -i id_rsa ubuntu@65.0.123.46 << 'EOF'
-          kind get clusters | grep -qx tws-kind-cluster || kind create cluster --config k8s/kind-config.yaml --name tws-kind-cluster
+          mv kind-config.yaml ..
+          kind get clusters | grep -qx tws-kind-cluster || kind create cluster --config kind-config.yaml --name tws-kind-cluster
           kubectl apply -f k8s/
           EOF
       - name: Remove SSH key
