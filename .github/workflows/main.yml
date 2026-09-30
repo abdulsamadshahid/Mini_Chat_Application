@@ -71,7 +71,7 @@ jobs:
       - name: Deploy on EC2
         run: |
           ssh -o StrictHostKeyChecking=no -i id_rsa ubuntu@65.0.123.46 << 'EOF'
-          mv k8s/kind-config.yaml ..
+          mv k8s/kind-config.yaml .
           kind get clusters | grep -qx tws-kind-cluster || kind create cluster --config kind-config.yaml --name tws-kind-cluster
           kubectl apply -f k8s/
           EOF
