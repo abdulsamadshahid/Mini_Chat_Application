@@ -1,1 +1,80 @@
-#workflow
+name: My_minichat_app
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  Configure_AWS_Credentials:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v6.2.4
+        with:
+          role-to-assume: arn:aws:iam::058835008914:role/github_actions_ecr_permission
+          aws-region: ap-south-1
+
+      - name: Check AWS identity
+        run: aws sts get-caller-identity
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Build and Push Docker Images
+        run: |
+          aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin 058835008914.dkr.ecr.ap-south-1.amazonaws.com
+
+          docker build -f ./frontend/Dockerfile -t my-minichat-app_frontend ./frontend
+
+          docker tag my-minichat-app_frontend:latest 058835008914.dkr.ecr.ap-south-1.amazonaws.com/frontend_repo:latest
+
+          docker push 058835008914.dkr.ecr.ap-south-1.amazonaws.com/frontend_repo:latest
+
+          docker build -f ./backend/Dockerfile -t my-minichat-app_backend ./backend
+
+          docker tag my-minichat-app_backend:latest 058835008914.dkr.ecr.ap-south-1.amazonaws.com/backend_repo:latest
+
+          docker push 058835008914.dkr.ecr.ap-south-1.amazonaws.com/backend_repo:latest
+  Deploy:
+    needs: Configure_AWS_Credentials
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Prepare SSH key
+        run: |
+          echo "${{ secrets.id_rsa }}" > id_rsa
+          chmod 600 id_rsa
+
+      - name: Copy deployment files
+        run: |
+          scp -o StrictHostKeyChecking=no -i id_rsa -r k8s ubuntu@13.202.44.39:/home/ubuntu/
+      - name: Create Kubernetes secret
+        env:
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+        run: |
+          kubectl create secret generic postgres-secret \
+            --from-literal=POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
+            --from-literal=DATABASE_URL="$DATABASE_URL" \
+            --from-literal=JWT_SECRET="$JWT_SECRET" \
+            --dry-run=client \
+            -o yaml > postgres-secret.yml
+
+          scp -o StrictHostKeyChecking=no -i id_rsa postgres-secret.yml ubuntu@13.202.44.39:/home/ubuntu/k8s
+      - name: Deploy on EC2
+        run: |
+          ssh -o StrictHostKeyChecking=no -i id_rsa ubuntu@13.202.44.39 << 'EOF'
+          kind get clusters | grep -qx tws-kind-cluster || kind create cluster --config k8s/kind-config.yaml --name tws-kind-cluster
+          aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin 058835008914.dkr.ecr.ap-south-1.amazonaws.com
+          kubectl apply -f k8s/
+          EOF
+      - name: Remove SSH key
+        if: always()
+        run: rm -f id_rsa
