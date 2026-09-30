@@ -53,7 +53,7 @@ jobs:
 
       - name: Copy deployment files
         run: |
-          scp -o StrictHostKeyChecking=no -i id_rsa -r k8s ubuntu@13.202.44.39:/home/ubuntu/
+          scp -o StrictHostKeyChecking=no -i id_rsa -r k8s ubuntu@65.0.123.46:/home/ubuntu/
       - name: Create Kubernetes secret
         env:
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
@@ -67,10 +67,10 @@ jobs:
             --dry-run=client \
             -o yaml > postgres-secret.yml
 
-          scp -o StrictHostKeyChecking=no -i id_rsa postgres-secret.yml ubuntu@13.202.44.39:/home/ubuntu/k8s
+          scp -o StrictHostKeyChecking=no -i id_rsa postgres-secret.yml ubuntu@65.0.123.46:/home/ubuntu/k8s
       - name: Deploy on EC2
         run: |
-          ssh -o StrictHostKeyChecking=no -i id_rsa ubuntu@13.202.44.39 << 'EOF'
+          ssh -o StrictHostKeyChecking=no -i id_rsa ubuntu@65.0.123.46 << 'EOF'
           kind get clusters | grep -qx tws-kind-cluster || kind create cluster --config k8s/kind-config.yaml --name tws-kind-cluster
           aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin 058835008914.dkr.ecr.ap-south-1.amazonaws.com
           kubectl apply -f k8s/
