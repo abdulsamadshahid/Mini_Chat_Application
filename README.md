@@ -1,279 +1,440 @@
-# MiniChat 🚀
-### Production-Grade Real-Time Chat Application for DevOps & Kubernetes Portfolio
+# MiniChat — Kubernetes Deployment
 
-MiniChat is an intentionally scoped, horizontally scalable real-time messaging application designed as a developer handoff for **DevOps / SRE / Kubernetes** deployment.
+MiniChat is a small real-time chat application deployed on a Kubernetes cluster running on AWS EC2.
 
-While the product feature set is clean and concise (focused on 1-to-3 participant chat rooms), the underlying architecture is built with real distributed systems patterns: stateless backend instances, relational data persistence in **PostgreSQL**, distributed event broadcasting via **Redis Pub/Sub**, authenticated WebSockets, and explicit Kubernetes liveness/readiness probes.
+The main focus of this project was the **DevOps and infrastructure side** of the application rather than application development.
 
----
+The project covers AWS infrastructure provisioning with Terraform followed by EC2 configuration with Ansible and Kubernetes deployment with Kind. GitHub Actions is used to build Docker images and push them to Amazon ECR before deploying the application to the Kubernetes cluster.
 
-## 1. System Architecture
+## Architecture
 
-MiniChat decouples permanent state storage from transient real-time event dissemination.
-
-```
-                         [ Clients / Browsers ]
-                         /         |         \
-                  WebSocket    WebSocket    WebSocket
-                        /          |          \
-                       v           v           v
-           [ Kubernetes Service / Ingress / Load Balancer ]
-                       /           |           \
-                      v            v            v
-              +---------------+  +---------------+  +---------------+
-              |   Backend 1   |  |   Backend 2   |  |   Backend 3   |
-              | (Express/WS)  |  | (Express/WS)  |  | (Express/WS)  |
-              +---------------+  +---------------+  +---------------+
-                     |   \            |   /            |   /
-        Read/Write   |    \ Pub/Sub   |  /  Pub/Sub    |  /  Pub/Sub
-        Persisted    |     \ Sync     | /   Sync       | /   Sync
-        Data         |      \         |/               |/
-                     v       v        v                v
-            +----------------+       +------------------------+
-            |   PostgreSQL   |       |      Redis 7.x         |
-            | (Source of     |       | (Pub/Sub Adapter &     |
-            |  Truth)        |       |  Ephemeral Presence)   |
-            +----------------+       +------------------------+
-```
-
-### Why PostgreSQL for Messages vs. Redis for Coordination?
-
-* **PostgreSQL (Durability & ACID Compliance):**
-  Permanent messages, room ownership, memberships, and user credentials demand relational integrity, foreign key cascading (`ON DELETE CASCADE`), transactional consistency, and non-volatile disk persistence. PostgreSQL serves as the **sole source of truth**.
-* **Redis (Sub-millisecond Transient Coordination):**
-  When multiple backend instances run behind a Kubernetes Horizontal Pod Autoscaler (HPA), Client A may be connected to Pod 1 while Client B is connected to Pod 2.
-  Storing chat history in Redis would risk memory bloat and eventual data loss on cache evictions. Instead, Redis is used strictly as a **distributed message broker (Pub/Sub)** and for **ephemeral presence** (`minichat:presence:<userId>` with TTL).
-
----
-
-## 2. Real-Time Redis Pub/Sub Flow
-
-When User A sends a message in a chat room:
-
-```
-[User A on Pod 1]
-       │
-       │ 1. WebSocket Event: "send_message" { roomId, content }
-       ▼
- [Backend Pod 1]
-       │
-       ├─► 2. Authenticate JWT & Validate Room Membership
-       │
-       ├─► 3. INSERT INTO messages (...)  ──► [PostgreSQL Database]
-       │                                     (Saved permanently)
-       │
-       └─► 4. Redis Adapter Publish  ────────► [Redis Pub/Sub Channel]
-                                                       │
-                           ┌───────────────────────────┴───────────────────────────┐
-                           ▼                                                       ▼
-                    [Backend Pod 1]                                         [Backend Pod 2]
-                           │                                                       │
-                           ▼                                                       ▼
-                 Deliver to connected                                    Deliver to connected
-                 Room Members on Pod 1                                   Room Members on Pod 2
-                           │                                                       │
-                           ▼                                                       ▼
-                     [User A Screen]                                         [User B Screen]
+```text
+                         Internet
+                            │
+                            ▼
+                    ┌───────────────┐
+                    │   AWS EC2     │
+                    │               │
+                    │   Kind        │
+                    │   Kubernetes  │
+                    └───────┬───────┘
+                            │
+                       NodePort
+                            │
+                            ▼
+                    ┌───────────────┐
+                    │   Frontend    │
+                    │ React + Nginx │
+                    └───────┬───────┘
+                            │
+                     Kubernetes
+                       Service
+                            │
+                            ▼
+                    ┌───────────────┐
+                    │    Backend    │
+                    │ Node + Express│
+                    └───────┬───────┘
+                            │
+                  ┌─────────┴─────────┐
+                  ▼                   ▼
+          ┌───────────────┐   ┌───────────────┐
+          │  PostgreSQL   │   │     Redis     │
+          │   Database    │   │  Pub/Sub      │
+          └───────────────┘   └───────────────┘
 ```
 
-1. **Client emits `send_message`** with room ID and content over WebSocket.
-2. **Backend Pod 1** validates the JWT token and queries PostgreSQL to ensure the user is an authorized member of the room.
-3. **Backend Pod 1** persists the message to PostgreSQL.
-4. **Backend Pod 1** emits `new_message` to `room:<roomId>`.
-5. The **`@socket.io/redis-adapter`** publishes the event payload to Redis.
-6. **Backend Pod 2** (and any other running replicas) receives the event over Redis Sub and delivers it to connected clients in that room immediately.
+## Technology Stack
 
----
+### AWS
 
-## 3. Technology Stack
+* EC2
+* VPC
+* Public Subnet
+* Internet Gateway
+* Route Table
+* Security Groups
+* IAM
+* Amazon ECR
 
-| Layer | Technology | Rationale |
-|---|---|---|
-| **Frontend** | React 19, Vite, Tailwind CSS, Lucide | Responsive, component-driven client with zero bloat |
-| **Frontend Web Server** | Nginx Alpine | Serves production static assets with SPA fallback and WebSocket reverse proxy |
-| **Backend** | Node.js 22, Express, TypeScript | High-concurrency asynchronous runtime |
-| **Real-Time** | Socket.IO + `@socket.io/redis-adapter` | Resilient WebSocket engine with built-in multi-replica synchronization |
-| **Database** | PostgreSQL 16 | Relational consistency, foreign keys, indexed message history |
-| **Cache & Pub/Sub** | Redis 7 | Distributed pub/sub bus, ephemeral presence tracking with TTL |
-| **Authentication** | JWT (jsonwebtoken) & bcryptjs | Stateless authorization suitable for horizontally scaled pods |
+### Infrastructure & DevOps
 
----
+* Terraform
+* Ansible
+* Docker
+* Kubernetes
+* Kind
+* GitHub Actions
+* AWS OIDC
 
-## 4. Key Application Rules
+### Application
 
-* **Maximum 3 Users per Room:** Chat rooms are strictly restricted to a maximum of 3 participants. This boundary condition is enforced at both the API and database validation layers.
-* **Ephemeral Presence:** User online/offline state is tracked in Redis memory using keys with automatic TTL expiration. If a pod crashes, presence state naturally expires without polluting the database.
-* **Strict Room Authorization:** Users cannot read messages or join WebSocket channels of rooms they have not been explicitly invited to.
+* React
+* Vite
+* Node.js
+* Express
+* PostgreSQL
+* Redis
+* Socket.IO / WebSockets
+* Nginx
 
----
+## AWS Infrastructure
 
-## 5. Kubernetes & Health Probes
+Terraform provisions the main AWS infrastructure:
 
-MiniChat strictly separates process liveness from dependency readiness:
+* VPC
+* Public subnet
+* Internet Gateway
+* Route table
+* Security group
+* EC2 instance
+* IAM role and instance profile
+* Amazon ECR repositories
 
-| Endpoint | Probe Type | Behavior | Kubernetes Config |
-|---|---|---|---|
-| `GET /health` | **Liveness Probe** | Returns HTTP 200 `{ status: "ok" }` when the Node.js process event loop is alive. **Does not depend on external services.** | `livenessProbe.httpGet.path: /health` |
-| `GET /ready` | **Readiness Probe** | Queries PostgreSQL (`SELECT 1`) and pings Redis (`PING`). Returns HTTP 200 when ready or HTTP 503 if downstream dependencies are unreachable. | `readinessProbe.httpGet.path: /ready` |
+The EC2 instance runs the Kind Kubernetes cluster.
 
-### Graceful Shutdown
-The backend intercepts `SIGTERM` and `SIGINT` signals emitted by the Kubernetes kubelet during pod termination:
-1. Stops accepting incoming HTTP requests (`server.close()`).
-2. Closes active WebSocket connections.
-3. Disconnects Redis pub/sub clients.
-4. Drains the PostgreSQL connection pool.
-5. Exits cleanly with status code `0`.
-
----
-
-## 6. Project Structure
-
-```
-minichat/
+```text
+AWS
 │
-├── frontend/                     # Frontend Application
-│   ├── src/                      # React source code
-│   ├── Dockerfile                # Multi-stage build (Node build -> Nginx Alpine)
-│   ├── nginx.conf                # Nginx reverse proxy & SPA configuration
-│   └── package.json              # Frontend manifest
+├── VPC
+│   └── Public Subnet
+│       └── EC2
+│           └── Kind Cluster
+│               ├── Control Plane
+│               └── Workers
 │
-├── backend/                      # Backend Application
-│   ├── src/
-│   │   ├── app.ts                # Express application factory
-│   │   ├── config.ts             # Configuration loader from environment
-│   │   ├── index.ts              # Standalone production server runner
-│   │   ├── database/             # PostgreSQL connection pool & schema
-│   │   │   ├── db.ts             # Query pool & migration runner
-│   │   │   └── schema.sql        # Database table definitions & indexes
-│   │   ├── middleware/           # JWT authentication middleware
-│   │   │   └── auth.ts
-│   │   ├── routes/               # REST API endpoints
-│   │   │   ├── auth.ts           # /api/auth/register, /login, /me
-│   │   │   ├── rooms.ts          # /api/rooms, /members, /messages
-│   │   │   └── health.ts         # /health, /ready probes
-│   │   ├── services/             # Redis client & presence manager
-│   │   │   └── redis.ts
-│   │   └── websocket/            # Socket.IO setup & Redis adapter
-│   │       └── socket.ts
-│   ├── Dockerfile                # Multi-stage backend build (Node Alpine, non-root user)
-│   ├── tsconfig.json             # Backend TypeScript config
-│   └── package.json              # Backend dependencies
-│
-├── docker-compose.yml            # Local testing orchestrator (PG + Redis + App)
-├── .env.example                  # Environment variable reference
-├── .gitignore
-└── README.md
+└── ECR
+    ├── minichat-frontend
+    └── minichat-backend
 ```
 
----
+## Kubernetes Architecture
 
-## 7. Environment Variables
+The application is separated into multiple Kubernetes workloads.
 
-Reference template from `.env.example`:
+### Frontend
+
+* React application
+* Served through Nginx
+* Exposed using a NodePort Service
+
+### Backend
+
+* Node.js + Express
+* Handles API requests
+* Handles WebSocket connections
+* Communicates with PostgreSQL and Redis
+
+### PostgreSQL
+
+* Stores application data
+* Uses a Kubernetes PersistentVolumeClaim for persistent storage
+
+### Redis
+
+* Used for Redis Pub/Sub
+* Supports real-time communication between backend components
+
+### Services
+
+```text
+frontend-service  → Frontend Pod
+backend-service   → Backend Pod
+postgres-service  → PostgreSQL Pod
+redis-service     → Redis Pod
+```
+
+The frontend and backend communicate through Kubernetes Service DNS rather than hardcoded pod IP addresses.
+
+For example:
+
+```text
+redis-service:6379
+postgres-service:5432
+backend-service:3000
+```
+
+## Infrastructure Deployment
+
+### 1. Provision AWS Infrastructure
+
+Terraform is used to create the AWS resources.
 
 ```bash
-# Server Port
-PORT=3000
-NODE_ENV=production
-
-# Database (PostgreSQL)
-DATABASE_URL=postgresql://postgres:postgres@postgres:5432/minichat
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=postgres
-POSTGRES_DB=minichat
-
-# Redis
-REDIS_URL=redis://redis:6379
-
-# Authentication
-JWT_SECRET=your-32-character-secret-key-goes-here
-JWT_EXPIRES_IN=7d
-CORS_ORIGIN=*
+terraform init
+terraform plan
+terraform apply
 ```
 
----
+### 2. Configure EC2
 
-## 8. Local Setup & Docker Compose
+Ansible installs and configures the required tools on the EC2 instance.
 
-### Running with Docker Compose
+The playbook installs:
 
-To test the entire containerized environment locally (Frontend, Backend, PostgreSQL, Redis):
+* Docker
+* Docker Compose
+* AWS CLI
+* Kind
+* kubectl
+
+The Kind cluster configuration is then copied to the EC2 instance.
+
+### 3. Create Kind Cluster
+
+The cluster uses one control-plane node and multiple worker nodes.
 
 ```bash
-# 1. Clone repository
-git clone <your-repo-url>
-cd minichat
-
-# 2. Start all services
-docker compose up --build
+kind create cluster \
+  --config kind-config.yaml \
+  --name tws-kind-cluster
 ```
 
-Access the application in your browser:
-* **Frontend:** `http://localhost:8080`
-* **Backend Direct API:** `http://localhost:3000`
-* **Liveness Probe:** `http://localhost:3000/health`
-* **Readiness Probe:** `http://localhost:3000/ready`
-
-### Testing Multi-Backend Horizontal Scaling
-
-To simulate multiple backend instances communicating via Redis Pub/Sub:
+Verify the cluster:
 
 ```bash
-docker compose up --scale backend=2
+kind get clusters
+kubectl get nodes
 ```
 
-Both backend instances will connect to Redis, and messages sent to one instance will be delivered to clients connected to the other instance in real time!
+## CI/CD
 
----
+GitHub Actions handles the application deployment workflow.
 
-## 9. REST API Specification
+```text
+Git Push
+   │
+   ▼
+GitHub Actions
+   │
+   ├── Authenticate with AWS using OIDC
+   │
+   ├── Build frontend image
+   │
+   ├── Build backend image
+   │
+   ├── Push images to Amazon ECR
+   │
+   └── SSH into EC2
+           │
+           ├── Copy Kubernetes manifests
+           ├── Create Kind cluster if required
+           ├── Authenticate Docker with ECR
+           └── Apply Kubernetes manifests
+```
 
-### Authentication
+AWS OIDC is used so GitHub Actions can assume an IAM role without storing long-lived AWS access keys in GitHub.
 
-* `POST /api/auth/register`
-  * Body: `{ "name": "Alice", "email": "alice@minichat.dev", "password": "password123" }`
-  * Response: HTTP 201 `{ "token": "...", "user": { ... } }`
-* `POST /api/auth/login`
-  * Body: `{ "email": "alice@minichat.dev", "password": "password123" }`
-  * Response: HTTP 200 `{ "token": "...", "user": { ... } }`
-* `GET /api/auth/me`
-  * Headers: `Authorization: Bearer <token>`
-  * Response: HTTP 200 `{ "user": { ... } }`
+## Secrets
 
-### Chat Rooms
+Application secrets are not committed to the repository.
 
-* `POST /api/rooms`
-  * Headers: `Authorization: Bearer <token>`
-  * Body: `{ "name": "DevOps Discussion" }`
-  * Response: HTTP 201 `{ "room": { "id": "...", "name": "..." } }`
-* `GET /api/rooms`
-  * Headers: `Authorization: Bearer <token>`
-  * Response: HTTP 200 `{ "rooms": [ ... ] }`
-* `GET /api/rooms/:id`
-  * Headers: `Authorization: Bearer <token>`
-  * Response: HTTP 200 `{ "room": { "id": "...", "members": [ ... ] } }`
-* `POST /api/rooms/:id/members`
-  * Headers: `Authorization: Bearer <token>`
-  * Body: `{ "email": "bob@minichat.dev" }`
-  * Response: HTTP 201 `{ "member": { ... } }`
-  * Error if >= 3 users: HTTP 400 `{ "error": "Room capacity reached. A room can contain a maximum of 3 users." }`
-* `GET /api/rooms/:id/messages`
-  * Headers: `Authorization: Bearer <token>`
-  * Response: HTTP 200 `{ "messages": [ ... ] }`
+Sensitive values such as:
 
-### Health & Monitoring
+* PostgreSQL password
+* Database URL
+* JWT secret
 
-* `GET /health` -> HTTP 200 `{ "status": "ok", "uptime": 45.2, "timestamp": "..." }`
-* `GET /ready` -> HTTP 200 `{ "status": "ready", "checks": { "database": "connected", "redis": "connected" } }`
+are stored as GitHub Actions Secrets.
 
----
+The deployment workflow generates a Kubernetes Secret during deployment and applies it to the cluster.
 
-## 10. WebSocket Events Reference
+```text
+GitHub Secrets
+      │
+      ▼
+GitHub Actions
+      │
+      ▼
+Kubernetes Secret
+      │
+      ▼
+Backend / PostgreSQL
+```
 
-Handshake requires: `{ auth: { token: "<jwt>" } }`
+## Troubleshooting
 
-* `join_room` -> `{ roomId: string }`
-* `leave_room` -> `{ roomId: string }`
-* `send_message` -> `{ roomId: string, content: string }`
-* `new_message` (incoming) -> `{ id, room_id, user_id, content, created_at, user_name, user_email }`
-* `user_presence` (incoming) -> `{ userId, status: "online" | "offline" }`
+One of the most useful parts of the project was troubleshooting issues after the Kubernetes pods were already running.
+
+### Frontend was not reachable
+
+The frontend was working inside the cluster but could not initially be accessed through the EC2 public IP.
+
+I had to trace the request through:
+
+```text
+EC2
+→ Docker / Kind
+→ NodePort
+→ Kubernetes Service
+→ Frontend Pod
+```
+
+This helped me understand the difference between the Kubernetes NodePort and the port exposed by the Kind container on the EC2 host.
+
+### Backend Service had no endpoints
+
+The frontend initially returned HTTP 502 when trying to communicate with the backend.
+
+Checking the Service showed:
+
+```bash
+kubectl get endpoints backend-service
+```
+
+The Service had no endpoints.
+
+The problem was that the Service selector did not match the labels on the backend Deployment.
+
+After correcting the labels Kubernetes was able to associate the Service with the backend pods.
+
+```text
+Backend Deployment
+        │
+        │ labels
+        ▼
+Backend Pod
+
+Backend Service
+        │
+        │ selector
+        ▼
+Backend Pod
+```
+
+This was a useful reminder that:
+
+> A pod being `Running` does not necessarily mean the application is reachable.
+
+## Useful Kubernetes Commands
+
+Check all resources:
+
+```bash
+kubectl get all
+```
+
+Check pods:
+
+```bash
+kubectl get pods -o wide
+```
+
+Check services:
+
+```bash
+kubectl get svc
+```
+
+Check Service endpoints:
+
+```bash
+kubectl get endpoints
+```
+
+Check deployment status:
+
+```bash
+kubectl get deployments
+```
+
+Check logs:
+
+```bash
+kubectl logs deployment/backend-deployment
+```
+
+Describe a resource:
+
+```bash
+kubectl describe svc backend-service
+```
+
+Check the current cluster:
+
+```bash
+kubectl config current-context
+```
+
+## Project Structure
+
+```text
+.
+├── ansible/
+│   ├── inventory.ini
+│   └── playbook.yml
+│
+├── terraform/
+│   ├── main.tf
+│   ├── provider.tf
+│   └── variables.tf
+│
+├── frontend/
+│   └── Dockerfile
+│
+├── backend/
+│   └── Dockerfile
+│
+├── k8s/
+│   ├── kind-config.yaml
+│   ├── frontend-deployment.yml
+│   ├── frontend-service.yml
+│   ├── backend-deployment.yml
+│   ├── backend-service.yml
+│   ├── postgres-deployment.yml
+│   ├── postgres-service.yml
+│   ├── redis-deployment.yml
+│   ├── redis-service.yml
+│   └── postgres-pvc.yml
+│
+└── .github/
+    └── workflows/
+        └── deploy.yml
+```
+
+## What I Learned
+
+The main takeaway from this project was learning to troubleshoot the application across multiple layers instead of looking only at Kubernetes.
+
+A problem that appears as a frontend error can actually originate from:
+
+* AWS networking
+* Docker
+* Kind port mappings
+* Kubernetes Services
+* Service selectors
+* Pod labels
+* Container ports
+* Backend dependencies
+
+This project gave me more practical experience with:
+
+* Kubernetes networking
+* Kubernetes Service discovery
+* Docker containerization
+* Terraform
+* Ansible
+* AWS infrastructure
+* GitHub Actions
+* AWS OIDC
+* Kubernetes Secrets
+* PostgreSQL
+* Redis
+* CI/CD
+
+## Future Improvements
+
+Possible improvements for a future version include:
+
+* Move the deployment from Kind to Amazon EKS
+* Add Kubernetes Ingress
+* Add TLS
+* Add resource requests and limits
+* Add Horizontal Pod Autoscaling
+* Add Prometheus and Grafana monitoring
+* Improve the CI/CD workflow with image versioning instead of relying on mutable tags
+* Add automated health checks and deployment verification
+
+## Disclaimer
+
+MiniChat was developed as the application component of this project. My primary focus was the infrastructure deployment and DevOps side including AWS provisioning containerization Kubernetes configuration automation and CI/CD.
