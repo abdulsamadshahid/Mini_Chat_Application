@@ -1,0 +1,64 @@
+name: My_minichat_app
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  Configure_AWS_Credentials:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v6.2.4
+        with:
+          role-to-assume: arn:aws:iam::058835008914:role/github_actions_ecr_permission
+          aws-region: ap-south-1
+
+      - name: Check AWS identity
+        run: aws sts get-caller-identity
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Build and Push Docker Images
+        run: |
+          aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin 058835008914.dkr.ecr.ap-south-1.amazonaws.com
+
+          docker build -f ./frontend/Dockerfile -t minichat_frontend ./frontend
+
+          docker tag minichat_frontend:latest 058835008914.dkr.ecr.ap-south-1.amazonaws.com/minichat_frontend:latest
+
+          docker push 058835008914.dkr.ecr.ap-south-1.amazonaws.com/minichat_frontend:latest
+
+          docker build -f ./backend/Dockerfile -t minichat_backend ./backend
+
+          docker tag minichat_backend:latest 058835008914.dkr.ecr.ap-south-1.amazonaws.com/minichat_backend:latest
+
+          docker push 058835008914.dkr.ecr.ap-south-1.amazonaws.com/minichat_backend:latest
+      - name: Configure kubectl
+        run: |
+          aws eks update-kubeconfig --region ap-south-1 --name minichat-cluster
+      - name: Verify EKS connection
+        run: kubectl get nodes
+      - name: Create Kubernetes secret
+        env:
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+        run: |
+          kubectl create secret generic postgres-secret \
+            --from-literal=POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
+            --from-literal=DATABASE_URL="$DATABASE_URL" \
+            --from-literal=JWT_SECRET="$JWT_SECRET" \
+            --dry-run=client \
+            -o yaml > postgres-secret.yml
+
+      - name: Apply Kubernetes
+        run: |
+          kubectl apply -f postgres-secret.yml
+          kubectl apply -f k8s

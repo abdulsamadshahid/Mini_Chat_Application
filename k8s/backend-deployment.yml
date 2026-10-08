@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
       - name: backend
-        image: public.ecr.aws/k5n5y8u0/minichat-backend
+        image: 058835008914.dkr.ecr.ap-south-1.amazonaws.com/minichat_backend:latest
         ports:
         - containerPort: 3000
         env:

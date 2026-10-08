@@ -7,3 +7,5 @@ coverage/
 .env*
 !.env.example
 k8s/secrets.yml
+frontend/node_modules
+backend/node_modules
