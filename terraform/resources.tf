@@ -19,7 +19,7 @@ module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
   version = "~> 6.0"
 
-  name = minichat_vpc
+  name = "minichat_vpc"
   cidr = "10.0.0.0/16"
 
   azs             = ["ap-south-1a", "ap-south-1b"]
