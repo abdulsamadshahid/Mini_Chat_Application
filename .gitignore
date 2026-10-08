@@ -9,3 +9,5 @@ coverage/
 k8s/secrets.yml
 frontend/node_modules
 backend/node_modules
+terraform/.terraform
+terraform/.terraform.lock.hcl

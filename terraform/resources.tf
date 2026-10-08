@@ -39,7 +39,8 @@ module "eks_al2023" {
 
   name               = "minichat-cluster"
   kubernetes_version = "1.36"
-
+  endpoint_public_access  = true
+  endpoint_private_access = true
   vpc_id     = module.vpc.vpc_id
   subnet_ids = module.vpc.private_subnets
   addons = {
@@ -47,7 +48,9 @@ module "eks_al2023" {
 
     kube-proxy = {}
 
-    vpc-cni = {}
+    vpc-cni = {
+  before_compute = true
+}
   }
   eks_managed_node_groups = {
     minichat = {
